@@ -128,5 +128,32 @@ function Cluster:exec_on_leader(bootstrap_function)
     return leader:exec(bootstrap_function)
 end
 
+-- Promote (func Server.promote())/demote (func is Server.demote()) server and
+-- make sure all servers in cluster recieve the promote/demote messages. This
+-- is usefull when we want to be sure no further communication caused by
+-- promote/demote call will happen.
+function Cluster:elect(server, func)
+    local wal_write_counts = {}
+
+    for i, s in ipairs(self.servers) do
+        wal_write_counts[i] = s:wal_write_count()
+    end
+    if func(server) then
+        for i, s in ipairs(self.servers) do
+            s:wait_wal_write_count(wal_write_counts[i] + 2)
+        end
+    end
+end
+
+function Cluster:promote(server)
+    self:elect(server, server.promote)
+    for _, s in ipairs(self.servers) do
+        s:wait_synchro_queue_owner_id(server:instance_id())
+    end
+end
+
+function Cluster:demote(server)
+    self:elect(server, server.demote)
+end
 
 return Cluster
