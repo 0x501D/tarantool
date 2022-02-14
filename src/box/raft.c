@@ -55,6 +55,9 @@ static struct trigger box_raft_on_update;
 struct rlist box_raft_on_broadcast =
 	RLIST_HEAD_INITIALIZER(box_raft_on_broadcast);
 
+struct rlist box_raft_on_message_send =
+	RLIST_HEAD_INITIALIZER(box_raft_on_message_send);
+
 /**
  * Worker fiber does all the asynchronous work, which may need yields and can be
  * long. These are WAL writes, network broadcasts. That allows not to block the
@@ -426,6 +429,56 @@ box_raft_wait_term_persisted(void)
 	do {
 		fiber_yield();
 	} while (raft->term < data.term && !fiber_is_cancelled());
+
+	trigger_clear(&trig);
+	if (fiber_is_cancelled()) {
+		diag_set(FiberIsCancelled);
+		return -1;
+	}
+	return 0;
+}
+
+static bool
+box_raft_term_broadcasted(struct raft *raft)
+{
+	replicaset_foreach(replica) {
+		if (replica->applier == NULL || replica->relay == NULL ||
+				tt_uuid_is_equal(&replica->uuid, &INSTANCE_UUID))
+			continue;
+
+		if (relay_get_state(replica->relay) == RELAY_FOLLOW &&
+				replica->sent_term < raft->volatile_term)
+			return false;
+	}
+	return true;
+}
+
+static int
+box_raft_wait_term_broadcasted_f(struct trigger *trig, void *event)
+{
+	struct raft *raft = event;
+	struct fiber *owner = trig->data;
+
+	if (!raft)
+		raft = box_raft();
+
+	if (box_raft_term_broadcasted(raft))
+		fiber_wakeup(owner);
+
+	return 0;
+}
+
+int
+box_raft_wait_term_broadcasted(void)
+{
+	struct raft *raft = box_raft();
+
+	struct trigger trig;
+	trigger_create(&trig, box_raft_wait_term_broadcasted_f, fiber(), NULL);
+	trigger_add(&box_raft_on_message_send, &trig);
+
+	while (!fiber_is_cancelled() && !box_raft_term_broadcasted(raft))
+		fiber_sleep(0);
 
 	trigger_clear(&trig);
 	if (fiber_is_cancelled()) {

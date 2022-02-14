@@ -42,6 +42,12 @@ extern "C" {
  */
 extern struct rlist box_raft_on_broadcast;
 
+/**
+ * A public trigger fired on Raft message send to peer,
+ * It's allowed to yield inside it, and it's run asynchronously.
+ */
+extern struct rlist box_raft_on_message_send;
+
 enum election_mode {
 	ELECTION_MODE_INVALID = -1,
 	ELECTION_MODE_OFF = 0,
@@ -111,6 +117,10 @@ box_raft_wait_term_outcome(void);
 /** Block this fiber until the current volatile term is persisted. */
 int
 box_raft_wait_term_persisted(void);
+
+/** Block this fiber until the current volatile term is broadcasted. */
+int
+box_raft_wait_term_broadcasted(void);
 
 void
 box_raft_init(void);

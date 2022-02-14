@@ -1780,6 +1780,7 @@ box_issue_promote(uint32_t prev_leader_id, int64_t promote_lsn)
 	struct raft *raft = box_raft();
 	assert(raft->volatile_term == raft->term);
 	assert(promote_lsn >= 0);
+	box_raft_wait_term_broadcasted();
 	txn_limbo_write_promote(&txn_limbo, promote_lsn,
 				raft->term);
 	struct synchro_request req = {
@@ -1802,6 +1803,7 @@ box_issue_demote(uint32_t prev_leader_id, int64_t promote_lsn)
 {
 	assert(box_raft()->volatile_term == box_raft()->term);
 	assert(promote_lsn >= 0);
+	box_raft_wait_term_broadcasted();
 	txn_limbo_write_demote(&txn_limbo, promote_lsn,
 				box_raft()->term);
 	struct synchro_request req = {

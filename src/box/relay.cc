@@ -1099,8 +1099,12 @@ tx_raft_msg_return(struct cmsg *base)
 {
 	struct relay_raft_msg *msg = (struct relay_raft_msg *)base;
 	msg->relay->tx.is_raft_push_sent = false;
+
 	if (msg->relay->tx.is_raft_push_pending)
 		relay_push_raft_msg(msg->relay);
+
+	msg->relay->replica->sent_term = msg->req.term;
+	trigger_run(&box_raft_on_message_send, NULL);
 }
 
 void
