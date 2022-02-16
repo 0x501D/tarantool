@@ -2,9 +2,11 @@ local t = require('luatest')
 local cluster = require('test.luatest_helpers.cluster')
 local asserts = require('test.luatest_helpers.asserts')
 local helpers = require('test.luatest_helpers')
+local fiber = require('fiber')
 local log = require('log')
 
-local g = t.group('gh-6036', {{engine = 'memtx'}, {engine = 'vinyl'}})
+--local g = t.group('gh-6036', {{engine = 'memtx'}, {engine = 'vinyl'}})
+local g = t.group('gh-6036', {{engine = 'memtx'}})
 
 g.before_each(function(cg)
     pcall(log.cfg, {level = 6})
@@ -134,4 +136,40 @@ g.test_qsync_order = function(cg)
     end)
 
     t.assert_equals(cg.r3:eval("return box.space.test:select()"), {{1},{2}})
+
+--    --
+--    -- Test that PROMOTE request is safe against term's race. For this we
+--    -- need to reconfigure cluster a bit.
+--    cg.r1:exec(function()
+--        box.cfg{ election_mode = 'off', }
+--    end)
+--    cg.r2:exec(function()
+--        box.cfg{ election_mode = 'off', }
+--    end)
+--    cg.r3:exec(function()
+--        box.cfg{ election_mode = 'off', }
+--    end)
+
+    cg.r1:exec(function()
+        box.ctl.promote()
+        box.ctl.wait_rw()
+    end)
+    vclock = cg.r1:eval("return box.info.vclock")
+    vclock[0] = nil
+    helpers:wait_vclock(cg.r2, vclock)
+    helpers:wait_vclock(cg.r3, vclock)
+
+    cg.r2:eval("box.error.injection.set('ERRINJ_WAL_DELAY', true)")
+    local f1 = fiber.create(function() cg.r2:eval("box.ctl.promote()") end)
+    local f2 = fiber.create(function()
+        t.helpers.retrying({}, function()
+            assert(cg.r2:exec(function()
+                return box.info.synchro.queue.latched == true
+            end))
+        end)
+    end)
+    cg.r1:eval("box.space.test:insert{4}")
+    cg.r2:eval("box.error.injection.set('ERRINJ_WAL_DELAY', false)")
+    t.helpers.retrying({}, function() return f1.status() == 'dead' end)
+    t.assert_equals(cg.r2:eval("return box.space.test:select()"), {{1},{2}})
 end
